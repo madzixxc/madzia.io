@@ -1,23 +1,154 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MADZIA.IO</title>
-<style>
-body{margin:0;min-height:100vh;display:flex;justify-content:center;align-items:center;background-color:#f5f6fa;font-family:monospace;overflow:hidden}pre{font-size:18px;line-height:1.2;white-space:pre;text-align:center;transform:scale(1.2);display:block;margin:2em auto;padding:0;font-family:Menlo,Monaco,monospace;letter-spacing:.1em;font-weight:400;transform-origin:center}.ascii-char{display:inline-block;transition:all .25s ease;color:#2c3e50;text-shadow:2px 2px 0 rgba(0,0,0,.1);position:relative}.ascii-char.highlight{color:#e74c3c;transform:scale(1.2) rotate(-2deg);text-shadow:3px 3px 0 rgba(231,76,60,.2);z-index:1}
-</style>
+  <meta charset="UTF-8">
+  <title>madzia.io - Spermatozoid Spotlight</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: black;
+      overflow: hidden;
+    }
+    .container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    .text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 200px;
+      font-weight: bold;
+      color: white;
+      pointer-events: none;
+    }
+    .worms-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .worm {
+      position: absolute;
+      width: 0;
+      height: 0;
+    }
+    .worm .head {
+      position: absolute;
+      width: 25px;
+      height: 10px;
+      border-radius: 50px;
+      background: white;
+      transform: translate(-50%, -50%);
+    }
+    .worm .tail {
+      position: absolute;
+      width: 10px;
+      height: 3px;
+      border-radius: 50%;
+      background: white;
+      left: -15px;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+    .spotlight {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: radial-gradient(circle at var(--spot-x, 50%) var(--spot-y, 50%), transparent 100px, black 120px);
+      z-index: 10;
+    }
+  </style>
 </head>
 <body>
-<pre id="ascii-art">
-███╗   ███╗ █████╗ ██████╗ ███████╗██╗ █████╗    ██╗ ██████╗ 
-████╗ ████║██╔══██╗██╔══██╗╚══███╔╝██║██╔══██╗   ██║██╔═══██╗
-██╔████╔██║███████║██║  ██║  ███╔╝ ██║███████║   ██║██║   ██║
-██║╚██╔╝██║██╔══██║██║  ██║ ███╔╝  ██║██╔══██║   ██║██║   ██║
-██║ ╚═╝ ██║██║  ██║██████╔╝███████╗██║██║  ██║   ██║╚██████╔╝
-╚═╝     ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝╚═╝  ╚═╝   ╚═╝ ╚═════╝ </pre>
-<script>
-const e=document.getElementById("ascii-art"),t=e.textContent;e.innerHTML=t.split("\n").map(e=>e.split("").map(e=>`<span class="ascii-char">${e}</span>`).join("")).join("\n");const s=document.querySelectorAll(".ascii-char");document.addEventListener("mousemove",e=>{s.forEach(t=>{const s=t.getBoundingClientRect(),n=Math.hypot(e.clientX-(s.left+s.width/2),e.clientY-(s.top+s.height/2));n<50&&(t.classList.add("highlight"),setTimeout(()=>{t.classList.remove("highlight")},800))})});
-</script>
+  <div class="container">
+    <div class="text">madzia.io</div>
+    <div class="worms-container"></div>
+    <div class="spotlight"></div>
+  </div>
+  <script>
+    var container = document.querySelector('.container');
+    var textEl = document.querySelector('.text');
+    var wormsContainer = document.querySelector('.worms-container');
+    var spotlight = document.querySelector('.spotlight');
+    var mouseX = window.innerWidth / 2, mouseY = window.innerHeight / 2;
+    var numWorms = 50;
+    var worms = [];
+    var attractForce = 0.15 * 3;
+    var repelForce = 0.9 * 3;
+    var damping = 0.9;
+    var textRect;
+    function updateTextRect() {
+      textRect = textEl.getBoundingClientRect();
+    }
+    updateTextRect();
+    window.addEventListener('resize', function() {
+      updateTextRect();
+    });
+    function getRandomBorderPoint(rect) {
+      var w = rect.width, h = rect.height, p = Math.random() * (2 * (w + h));
+      if (p < w) { return { x: rect.left + p, y: rect.top }; }
+      else if (p < w + h) { return { x: rect.right, y: rect.top + (p - w) }; }
+      else if (p < 2 * w + h) { return { x: rect.right - (p - w - h), y: rect.bottom }; }
+      else { return { x: rect.left, y: rect.bottom - (p - 2 * w - h) }; }
+    }
+    function createWorm() {
+      var wormEl = document.createElement('div');
+      wormEl.className = 'worm';
+      var headEl = document.createElement('div');
+      headEl.className = 'head';
+      var tailEl = document.createElement('div');
+      tailEl.className = 'tail';
+      wormEl.appendChild(headEl);
+      wormEl.appendChild(tailEl);
+      wormsContainer.appendChild(wormEl);
+      var point = getRandomBorderPoint(textRect);
+      return { el: wormEl, x: point.x, y: point.y, vx: 0, vy: 0, target: getRandomBorderPoint(textRect) };
+    }
+    for (var i = 0; i < numWorms; i++) {
+      worms.push(createWorm());
+    }
+    document.addEventListener('mousemove', function(e) {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+      spotlight.style.setProperty('--spot-x', e.clientX + 'px');
+      spotlight.style.setProperty('--spot-y', e.clientY + 'px');
+    });
+    function update() {
+      for (var i = 0; i < worms.length; i++) {
+        var worm = worms[i];
+        var dx = worm.target.x - worm.x, dy = worm.target.y - worm.y;
+        var dist = Math.hypot(dx, dy);
+        if (dist < 10) { worm.target = getRandomBorderPoint(textRect); }
+        var ax = (dx / dist) * attractForce, ay = (dy / dist) * attractForce;
+        var dxm = worm.x - mouseX, dym = worm.y - mouseY;
+        var distMouse = Math.hypot(dxm, dym);
+        if (distMouse < 100) {
+          ax += (dxm / distMouse) * repelForce;
+          ay += (dym / distMouse) * repelForce;
+        }
+        worm.vx = (worm.vx + ax) * damping;
+        worm.vy = (worm.vy + ay) * damping;
+        worm.x += worm.vx;
+        worm.y += worm.vy;
+        var angle = Math.atan2(worm.vy, worm.vx) * 180 / Math.PI;
+        worm.el.style.left = worm.x + 'px';
+        worm.el.style.top = worm.y + 'px';
+        worm.el.style.transform = 'rotate(' + angle + 'deg)';
+      }
+      requestAnimationFrame(update);
+    }
+    update();
+  </script>
 </body>
 </html>
