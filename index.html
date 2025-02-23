@@ -37,8 +37,10 @@
         }
 
         #text-wrapper {
-            position: relative;
-            transform: scale(0.9);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
         }
 
         .bg-tile {
@@ -272,40 +274,76 @@
         function renderText() {
             const wrapper = document.getElementById('text-wrapper');
             wrapper.innerHTML = '';
+
             let totalWidth = 0;
-            let totalHeight = 5 * pixelSize;
+            let maxHeight = 5;
+            let textPixels = [];
 
-            text.split('').forEach(char => {
-                if (!letters[char]) return;
+            let currentX = 0;
+            for (let char of text) {
+                if (char === ' ') {
+                    currentX += 3;
+                    continue;
+                }
                 const pattern = letters[char];
-                totalWidth += (pattern[0].length + 1) * pixelSize;
-            });
-
-            const maxWidth = window.innerWidth * 0.8;
-            const maxHeight = window.innerHeight * 0.5;
-            const scaleX = maxWidth / totalWidth;
-            const scaleY = maxHeight / totalHeight;
-            const scale = Math.min(scaleX, scaleY);
-
-            pixelSize = Math.floor(pixelSize * scale);
-            let xOffset = -totalWidth * scale / 2;
-
-            text.split('').forEach(char => {
-                if (!letters[char]) return;
-                const pattern = letters[char];
-                pattern.forEach((row, y) => {
-                    for (let x = 0; x < row.length; x++) {
-                        if (row[x] === '1') {
-                            const posX = x * pixelSize + xOffset;
-                            const posY = y * pixelSize - (totalHeight * scale / 2);
-                            const color = getColorForPosition(x, y);
-                            const pixel = createTextPixel(posX, posY, color);
-                            wrapper.appendChild(pixel);
+                if (pattern) {
+                    for (let y = 0; y < pattern.length; y++) {
+                        for (let x = 0; x < pattern[0].length; x++) {
+                            if (pattern[y][x] === '1') {
+                                textPixels.push({
+                                    x: currentX + x,
+                                    y: y,
+                                    color: getColorForPosition(currentX + x, y)
+                                });
+                            }
                         }
                     }
-                });
-                xOffset += (pattern[0].length + 1) * pixelSize;
+                    currentX += pattern[0].length + 1;
+                }
+            }
+            totalWidth = currentX - 1;
+
+            const borderWidth = 3;
+            let borderPixels = [];
+            
+            const hasTextPixel = (x, y) => {
+                return textPixels.some(p => p.x === x && p.y === y);
+            };
+
+            for (let y = -borderWidth; y < maxHeight + borderWidth; y++) {
+                for (let x = -borderWidth; x < totalWidth + borderWidth; x++) {
+                    let isBorder = false;
+                    for (let dy = -borderWidth; dy <= borderWidth; dy++) {
+                        for (let dx = -borderWidth; dx <= borderWidth; dx++) {
+                            const checkX = x - dx;
+                            const checkY = y - dy;
+                            if (hasTextPixel(checkX, checkY)) {
+                                if (!hasTextPixel(x, y)) {
+                                    isBorder = true;
+                                }
+                            }
+                        }
+                    }
+                    if (isBorder) {
+                        borderPixels.push({ x, y });
+                    }
+                }
+            }
+
+            borderPixels.forEach(({ x, y }) => {
+                const pixel = createTextPixel(x * pixelSize, y * pixelSize, '#888888');
+                wrapper.appendChild(pixel);
             });
+
+            textPixels.forEach(({ x, y, color }) => {
+                const pixel = createTextPixel(x * pixelSize, y * pixelSize, color);
+                wrapper.appendChild(pixel);
+            });
+
+            const wrapperWidth = (totalWidth + borderWidth * 2) * pixelSize;
+            const wrapperHeight = (maxHeight + borderWidth * 2) * pixelSize;
+            wrapper.style.width = `${wrapperWidth}px`;
+            wrapper.style.height = `${wrapperHeight}px`;
         }
 
         renderBackground();
