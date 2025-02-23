@@ -132,8 +132,8 @@
             ]
         };
 
-        // Vibrant colors for text
-        const colors = [
+        // Fixed color pattern for text
+        const colorPattern = [
             '#FF0080', // Pink
             '#00FF80', // Cyan
             '#8000FF', // Purple
@@ -143,59 +143,84 @@
             '#FFFF00'  // Yellow
         ];
 
+        function getColorForPosition(x, y) {
+            // Use position to deterministically select color
+            const index = Math.abs(x + y * 7) % colorPattern.length;
+            return colorPattern[index];
+        }
+
         function createBgTile(x, y, grid) {
             const tile = document.createElement('div');
             tile.className = 'bg-tile';
             
-            // Randomize tile size (smaller variation to prevent overlaps)
-            const baseSize = bgTileSize;
-            const sizeVariation = 20; // reduced size variation
-            const width = baseSize + (Math.random() - 0.5) * sizeVariation;
-            const height = baseSize + (Math.random() - 0.5) * sizeVariation;
+            // Fixed tile size
+            const width = bgTileSize;
+            const height = bgTileSize;
             
-            // Calculate safe position bounds
-            const maxPosVariation = (bgTileSize - Math.max(width, height)) / 2;
-            const posVariation = Math.max(0, maxPosVariation);
+            // Use seeded random for consistent but irregular placement
+            const seed = x * 10000 + y;
+            const random = (seed) => {
+                const x = Math.sin(seed++) * 10000;
+                return x - Math.floor(x);
+            };
             
-            // Try to find a non-overlapping position
-            let xPos, yPos;
-            let attempts = 0;
-            const maxAttempts = 5;
+            // Calculate maximum safe variation (half a tile size)
+            const maxVariation = bgTileSize * 0.5;
             
-            do {
-                xPos = x + (Math.random() - 0.5) * posVariation * 2;
-                yPos = y + (Math.random() - 0.5) * posVariation * 2;
-                attempts++;
-            } while (attempts < maxAttempts && isOverlapping(xPos, yPos, width, height, grid));
+            // Try multiple positions within the cell
+            const maxAttempts = 10;
+            let finalX = x, finalY = y;
+            let placed = false;
+            
+            for (let attempt = 0; attempt < maxAttempts && !placed; attempt++) {
+                // Reduce variation range and ensure minimum spacing
+                const variationX = (random(seed + attempt) - 0.5) * maxVariation;
+                const variationY = (random(seed + attempt + 1000) - 0.5) * maxVariation;
+                
+                const tryX = x + variationX;
+                const tryY = y + variationY;
+                
+                if (!isOverlapping(tryX, tryY, width, height, grid)) {
+                    finalX = tryX;
+                    finalY = tryY;
+                    placed = true;
+                }
+            }
+            
+            // If we couldn't find a non-overlapping position, use the original grid position
+            if (!placed) {
+                finalX = x;
+                finalY = y;
+            }
             
             // Update grid with final position
-            const gridX = Math.floor(xPos / bgTileSize);
-            const gridY = Math.floor(yPos / bgTileSize);
-            grid[`${gridX},${gridY}`] = { x: xPos, y: yPos, width, height };
+            const gridX = Math.floor(finalX / bgTileSize);
+            const gridY = Math.floor(finalY / bgTileSize);
+            grid[`${gridX},${gridY}`] = { x: finalX, y: finalY, width, height };
             
             tile.style.width = `${width}px`;
             tile.style.height = `${height}px`;
-            tile.style.left = `${xPos}px`;
-            tile.style.top = `${yPos}px`;
+            tile.style.left = `${finalX}px`;
+            tile.style.top = `${finalY}px`;
             
             return tile;
         }
 
         function isOverlapping(x, y, width, height, grid) {
-            const margin = 2; // minimum space between tiles
+            const margin = bgTileSize * 0.2; // 20% of tile size as minimum spacing
             
             // Check nearby grid cells for potential overlaps
-            const startGridX = Math.floor((x - width) / bgTileSize);
-            const endGridX = Math.ceil((x + width) / bgTileSize);
-            const startGridY = Math.floor((y - height) / bgTileSize);
-            const endGridY = Math.ceil((y + height) / bgTileSize);
+            const startGridX = Math.floor((x - width - margin) / bgTileSize) - 1;
+            const endGridX = Math.ceil((x + width + margin) / bgTileSize) + 1;
+            const startGridY = Math.floor((y - height - margin) / bgTileSize) - 1;
+            const endGridY = Math.ceil((y + height + margin) / bgTileSize) + 1;
             
             for (let gridY = startGridY; gridY <= endGridY; gridY++) {
                 for (let gridX = startGridX; gridX <= endGridX; gridX++) {
                     const key = `${gridX},${gridY}`;
                     const tile = grid[key];
                     if (tile) {
-                        // Check if rectangles overlap
+                        // Check if rectangles overlap with margin
                         if (!(x + width + margin < tile.x || 
                             x > tile.x + tile.width + margin || 
                             y + height + margin < tile.y || 
@@ -217,12 +242,12 @@
             pixel.style.height = `${pixelSize}px`;
             
             if (isGray) {
-                // Create gray gradient with higher contrast
+                // Fixed gray gradient
                 pixel.style.background = `linear-gradient(135deg, 
                     rgba(180, 180, 180, 0.9) 0%, 
                     rgba(100, 100, 100, 0.9) 100%)`;
             } else {
-                // Create gradient based on the base color
+                // Create gradient based on the fixed color
                 const rgb = hexToRgb(color);
                 const lighter = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`;
                 const darker = `rgba(${Math.max(0, rgb.r - 50)}, ${Math.max(0, rgb.g - 50)}, ${Math.max(0, rgb.b - 50)}, 1)`;
@@ -247,13 +272,22 @@
             container.innerHTML = '';
             
             const grid = {};
-            const cols = Math.ceil(window.innerWidth / bgTileSize) + 1;
-            const rows = Math.ceil(window.innerHeight / bgTileSize) + 1;
+            // Add extra columns and rows to account for variations
+            const cols = Math.ceil(window.innerWidth / bgTileSize) + 2;
+            const rows = Math.ceil(window.innerHeight / bgTileSize) + 2;
+            
+            // Offset the starting position to center the grid
+            const startX = -bgTileSize;
+            const startY = -bgTileSize;
 
-            // Create tiles with collision detection
+            // Create tiles with irregular placement
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
-                    const tile = createBgTile(x * bgTileSize, y * bgTileSize, grid);
+                    const tile = createBgTile(
+                        startX + x * bgTileSize,
+                        startY + y * bgTileSize,
+                        grid
+                    );
                     container.appendChild(tile);
                 }
             }
@@ -265,6 +299,12 @@
             let totalWidth = 0;
             let totalHeight = 5 * pixelSize;
             const textPixels = new Set();
+            let textBounds = {
+                minX: Infinity,
+                maxX: -Infinity,
+                minY: Infinity,
+                maxY: -Infinity
+            };
 
             // Calculate total width
             text.split('').forEach(char => {
@@ -283,7 +323,7 @@
             pixelSize = Math.floor(pixelSize * scale);
             let xOffset = -totalWidth * scale / 2;
 
-            // First pass: collect text positions
+            // First pass: collect text positions and bounds
             text.split('').forEach(char => {
                 if (!letters[char]) return;
                 const pattern = letters[char];
@@ -293,65 +333,69 @@
                             const posX = x * pixelSize + xOffset;
                             const posY = y * pixelSize - (totalHeight * scale / 2);
                             textPixels.add(`${posX},${posY}`);
+                            
+                            // Update bounds
+                            textBounds.minX = Math.min(textBounds.minX, posX);
+                            textBounds.maxX = Math.max(textBounds.maxX, posX + pixelSize);
+                            textBounds.minY = Math.min(textBounds.minY, posY);
+                            textBounds.maxY = Math.max(textBounds.maxY, posY + pixelSize);
                         }
                     }
                 });
                 xOffset += (pattern[0].length + 1) * pixelSize;
             });
 
-            // Reset xOffset for rendering
-            xOffset = -totalWidth * scale / 2;
+            // Calculate extended bounds for gray tiles
+            const padding = pixelSize * 3;
+            const extendedBounds = {
+                minX: Math.floor(textBounds.minX / pixelSize) * pixelSize - padding,
+                maxX: Math.ceil(textBounds.maxX / pixelSize) * pixelSize + padding,
+                minY: Math.floor(textBounds.minY / pixelSize) * pixelSize - padding,
+                maxY: Math.ceil(textBounds.maxY / pixelSize) * pixelSize + padding
+            };
 
-            // Second pass: render gray border pixels first
-            text.split('').forEach(char => {
-                if (!letters[char]) return;
-                const pattern = letters[char];
-                pattern.forEach((row, y) => {
-                    for (let x = 0; x < row.length; x++) {
-                        const posX = x * pixelSize + xOffset;
-                        const posY = y * pixelSize - (totalHeight * scale / 2);
+            // Create gray tiles in the extended area
+            for (let y = extendedBounds.minY; y <= extendedBounds.maxY; y += pixelSize) {
+                for (let x = extendedBounds.minX; x <= extendedBounds.maxX; x += pixelSize) {
+                    const pos = `${x},${y}`;
+                    if (!textPixels.has(pos)) {
+                        // Check if position is near any text pixel
+                        let shouldAddGray = false;
+                        const checkRadius = 3;
                         
-                        // Add gray pixels around text pixels
-                        if (row[x] === '0') {
-                            // Check if any adjacent position has a text pixel
-                            let hasAdjacentText = false;
-                            for (let dx = -1; dx <= 1; dx++) {
-                                for (let dy = -1; dy <= 1; dy++) {
-                                    if (dx === 0 && dy === 0) continue;
-                                    const checkPos = `${posX + dx * pixelSize},${posY + dy * pixelSize}`;
-                                    if (textPixels.has(checkPos)) {
-                                        hasAdjacentText = true;
-                                        break;
-                                    }
+                        for (let dy = -checkRadius; dy <= checkRadius; dy++) {
+                            for (let dx = -checkRadius; dx <= checkRadius; dx++) {
+                                const checkPos = `${x + dx * pixelSize},${y + dy * pixelSize}`;
+                                if (textPixels.has(checkPos)) {
+                                    shouldAddGray = true;
+                                    break;
                                 }
-                                if (hasAdjacentText) break;
                             }
-                            if (hasAdjacentText) {
-                                const pixel = createTextPixel(posX, posY, null, true);
-                                wrapper.appendChild(pixel);
-                            }
+                            if (shouldAddGray) break;
+                        }
+                        
+                        if (shouldAddGray) {
+                            const pixel = createTextPixel(x, y, null, true);
+                            wrapper.appendChild(pixel);
                         }
                     }
-                });
-                xOffset += (pattern[0].length + 1) * pixelSize;
-            });
+                }
+            }
 
             // Reset xOffset for rendering colored text pixels
             xOffset = -totalWidth * scale / 2;
 
-            // Third pass: render colored text pixels on top
+            // Final pass: render colored text pixels on top
             text.split('').forEach(char => {
                 if (!letters[char]) return;
                 const pattern = letters[char];
                 pattern.forEach((row, y) => {
                     for (let x = 0; x < row.length; x++) {
                         if (row[x] === '1') {
-                            const color = colors[Math.floor(Math.random() * colors.length)];
-                            const pixel = createTextPixel(
-                                x * pixelSize + xOffset,
-                                y * pixelSize - (totalHeight * scale / 2),
-                                color
-                            );
+                            const posX = x * pixelSize + xOffset;
+                            const posY = y * pixelSize - (totalHeight * scale / 2);
+                            const color = getColorForPosition(x, y);
+                            const pixel = createTextPixel(posX, posY, color);
                             wrapper.appendChild(pixel);
                         }
                     }
