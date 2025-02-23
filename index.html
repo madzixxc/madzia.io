@@ -87,12 +87,53 @@
             pointer-events: none;
             z-index: 99;
         }
+
+        #room-info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        #room-info input {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 5px;
+            font-family: monospace;
+            border-radius: 3px;
+            width: 80px;
+        }
+        #room-info button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 5px 10px;
+            font-family: monospace;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        #room-info button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
     </style>
 </head>
 <body>
     <div id="background"></div>
     <div id="foreground">
         <div id="text-wrapper"></div>
+    </div>
+    <div id="room-info">
+        <span>Room Code:</span>
+        <input type="text" id="room-code">
+        <button onclick="joinRoom()">Join</button>
     </div>
 
     <script>
@@ -299,20 +340,54 @@
         let textElements = [];
 
         const playerColors = ['#FF0000', '#00FF00', '#0000FF', '#FF00FF', '#FFFF00', '#00FFFF'];
-        let peers = {};
-        let playerId = Math.random().toString(36).substr(2, 9);
+        let roomId = null;
+        let playerId = Math.random().toString(36).substr(2, 6);
         let playerColor = playerColors[0];
         let isHost = false;
         let destroyedTiles = new Set();
         let playerCursors = {};
         let peer;
         let connections = {};
+        let usedColors = new Set();
 
-        function initPeerConnection() {
-            peer = new Peer(playerId, {
-                host: 'peerjs-server.herokuapp.com',
+        function generateRoomCode() {
+            return Math.random().toString(36).substr(2, 6).toUpperCase();
+        }
+
+        function showRoomInfo() {
+            const roomInput = document.getElementById('room-code');
+            roomInput.value = roomId;
+        }
+
+        function joinRoom() {
+            const roomCode = document.getElementById('room-code').value.trim().toUpperCase();
+            if (roomCode && roomCode !== roomId) {
+                if (peer) {
+                    peer.destroy();
+                }
+                roomId = roomCode;
+                initPeerConnection(false);
+            }
+        }
+
+        function initPeerConnection(createNewRoom = true) {
+            if (createNewRoom) {
+                roomId = generateRoomCode();
+                isHost = true;
+                playerColor = playerColors[0];
+                usedColors.add(playerColor);
+            }
+
+            if (peer) {
+                peer.destroy();
+            }
+
+            peer = new Peer(`${roomId}-${playerId}`, {
+                host: '0.peerjs.com',
                 secure: true,
                 port: 443,
+                path: '/',
+                debug: 2,
                 config: {
                     iceServers: [
                         { urls: 'stun:stun.l.google.com:19302' }
@@ -321,20 +396,26 @@
             });
 
             peer.on('open', (id) => {
-                console.log('My peer ID is: ' + id);
+                console.log('Connected with ID:', id);
+                showRoomInfo();
+                
                 if (!isHost) {
-                    connectToExistingPeers();
+                    const hostConn = peer.connect(`${roomId}-host`);
+                    setupConnection(hostConn);
                 }
             });
 
             peer.on('connection', (conn) => {
+                console.log('Incoming connection from:', conn.peer);
                 setupConnection(conn);
                 if (isHost) {
+                    const newPlayerColor = getNextAvailableColor();
                     conn.on('open', () => {
                         conn.send({
                             type: 'initialState',
                             destroyedTiles: Array.from(destroyedTiles),
-                            playerColor: playerColors[Object.keys(connections).length + 1]
+                            playerColor: newPlayerColor,
+                            usedColors: Array.from(usedColors)
                         });
                     });
                 }
@@ -343,15 +424,27 @@
             peer.on('error', (err) => {
                 console.log('Peer error:', err);
                 if (err.type === 'peer-unavailable' && !isHost) {
-                    isHost = true;
-                    playerColor = playerColors[0];
-                    console.log('Becoming host');
+                    console.log('Could not connect to room');
                 }
             });
         }
 
+        function getNextAvailableColor() {
+            const availableColors = playerColors.filter(color => !usedColors.has(color));
+            if (availableColors.length > 0) {
+                const color = availableColors[0];
+                usedColors.add(color);
+                return color;
+            }
+            return playerColors[Math.floor(Math.random() * playerColors.length)];
+        }
+
         function setupConnection(conn) {
             connections[conn.peer] = conn;
+            
+            conn.on('open', () => {
+                console.log('Connection opened with:', conn.peer);
+            });
 
             conn.on('data', (data) => {
                 switch(data.type) {
@@ -371,6 +464,9 @@
                         if (!isHost) {
                             destroyedTiles = new Set(data.destroyedTiles);
                             playerColor = data.playerColor;
+                            if (data.usedColors) {
+                                usedColors = new Set(data.usedColors);
+                            }
                             applyDestroyedTiles();
                         }
                         break;
@@ -378,23 +474,16 @@
             });
 
             conn.on('close', () => {
+                console.log('Connection closed with:', conn.peer);
                 if (playerCursors[conn.peer]) {
                     document.body.removeChild(playerCursors[conn.peer]);
                     delete playerCursors[conn.peer];
                 }
                 delete connections[conn.peer];
-            });
-        }
 
-        async function connectToExistingPeers() {
-            try {
-                const conn = peer.connect(playerId.replace(/[0-9]/g, ''));
-                setupConnection(conn);
-            } catch (err) {
-                console.log('Could not connect to existing peers, becoming host');
-                isHost = true;
-                playerColor = playerColors[0];
-            }
+                if (Object.keys(connections).length === 0 && !isHost) {
+                }
+            });
         }
 
         function broadcastToAllPeers(data) {
