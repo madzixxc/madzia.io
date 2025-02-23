@@ -358,13 +358,37 @@
             }
         }
 
-        function generateRoomCode() {
-            return Math.random().toString(36).substr(2, 6).toUpperCase();
+        function getUrlParam(param) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(param);
+        }
+
+        function initializeRoom() {
+            const roomFromUrl = getUrlParam('room');
+            debug('Checking for room in URL', { roomFromUrl });
+            
+            if (roomFromUrl) {
+                debug('Found room in URL, joining', { roomFromUrl });
+                roomId = roomFromUrl.toUpperCase();
+                document.getElementById('room-code').value = roomId;
+                initPeerConnection(false);
+            } else {
+                debug('No room in URL, creating new room');
+                initPeerConnection(true);
+            }
+        }
+
+        function updateUrlWithRoom(roomCode) {
+            const url = new URL(window.location);
+            url.searchParams.set('room', roomCode);
+            window.history.replaceState({}, '', url);
+            debug('Updated URL with room code', { roomCode });
         }
 
         function showRoomInfo() {
             const roomInput = document.getElementById('room-code');
             roomInput.value = roomId;
+            updateUrlWithRoom(roomId);
         }
 
         function joinRoom() {
@@ -374,8 +398,13 @@
                     peer.destroy();
                 }
                 roomId = roomCode;
+                updateUrlWithRoom(roomCode);
                 initPeerConnection(false);
             }
+        }
+
+        function generateRoomCode() {
+            return Math.random().toString(36).substr(2, 6).toUpperCase();
         }
 
         function initPeerConnection(createNewRoom = true) {
@@ -847,7 +876,7 @@
             broadcastCursorPosition(e.clientX, e.clientY);
         }
 
-        initPeerConnection();
+        initializeRoom();
         renderBackground();
         renderText();
         initGame();
