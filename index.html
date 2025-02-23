@@ -43,8 +43,6 @@
 
         .bg-tile {
             position: absolute;
-            width: 80px;
-            height: 80px;
             border-radius: 4px;
             background: linear-gradient(135deg,
                 rgba(40, 40, 40, 0.6) 0%,
@@ -53,7 +51,6 @@
             box-shadow: 
                 inset 1px 1px 2px rgba(255, 255, 255, 0.1),
                 inset -1px -1px 2px rgba(0, 0, 0, 0.3);
-            transition: all 0.5s ease;
             margin: 2px;
         }
 
@@ -146,12 +143,69 @@
             '#FFFF00'  // Yellow
         ];
 
-        function createBgTile(x, y) {
+        function createBgTile(x, y, grid) {
             const tile = document.createElement('div');
             tile.className = 'bg-tile';
-            tile.style.left = `${x}px`;
-            tile.style.top = `${y}px`;
+            
+            // Randomize tile size (smaller variation to prevent overlaps)
+            const baseSize = bgTileSize;
+            const sizeVariation = 20; // reduced size variation
+            const width = baseSize + (Math.random() - 0.5) * sizeVariation;
+            const height = baseSize + (Math.random() - 0.5) * sizeVariation;
+            
+            // Calculate safe position bounds
+            const maxPosVariation = (bgTileSize - Math.max(width, height)) / 2;
+            const posVariation = Math.max(0, maxPosVariation);
+            
+            // Try to find a non-overlapping position
+            let xPos, yPos;
+            let attempts = 0;
+            const maxAttempts = 5;
+            
+            do {
+                xPos = x + (Math.random() - 0.5) * posVariation * 2;
+                yPos = y + (Math.random() - 0.5) * posVariation * 2;
+                attempts++;
+            } while (attempts < maxAttempts && isOverlapping(xPos, yPos, width, height, grid));
+            
+            // Update grid with final position
+            const gridX = Math.floor(xPos / bgTileSize);
+            const gridY = Math.floor(yPos / bgTileSize);
+            grid[`${gridX},${gridY}`] = { x: xPos, y: yPos, width, height };
+            
+            tile.style.width = `${width}px`;
+            tile.style.height = `${height}px`;
+            tile.style.left = `${xPos}px`;
+            tile.style.top = `${yPos}px`;
+            
             return tile;
+        }
+
+        function isOverlapping(x, y, width, height, grid) {
+            const margin = 2; // minimum space between tiles
+            
+            // Check nearby grid cells for potential overlaps
+            const startGridX = Math.floor((x - width) / bgTileSize);
+            const endGridX = Math.ceil((x + width) / bgTileSize);
+            const startGridY = Math.floor((y - height) / bgTileSize);
+            const endGridY = Math.ceil((y + height) / bgTileSize);
+            
+            for (let gridY = startGridY; gridY <= endGridY; gridY++) {
+                for (let gridX = startGridX; gridX <= endGridX; gridX++) {
+                    const key = `${gridX},${gridY}`;
+                    const tile = grid[key];
+                    if (tile) {
+                        // Check if rectangles overlap
+                        if (!(x + width + margin < tile.x || 
+                            x > tile.x + tile.width + margin || 
+                            y + height + margin < tile.y || 
+                            y > tile.y + tile.height + margin)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         function createTextPixel(x, y, color) {
@@ -184,12 +238,15 @@
         function renderBackground() {
             const container = document.getElementById('background');
             container.innerHTML = '';
-            const cols = Math.ceil(window.innerWidth / bgTileSize);
-            const rows = Math.ceil(window.innerHeight / bgTileSize);
+            
+            const grid = {};
+            const cols = Math.ceil(window.innerWidth / bgTileSize) + 1;
+            const rows = Math.ceil(window.innerHeight / bgTileSize) + 1;
 
+            // Create tiles with collision detection
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
-                    const tile = createBgTile(x * bgTileSize, y * bgTileSize);
+                    const tile = createBgTile(x * bgTileSize, y * bgTileSize, grid);
                     container.appendChild(tile);
                 }
             }
@@ -239,24 +296,10 @@
             });
         }
 
-        function animate() {
-            document.querySelectorAll('.bg-tile').forEach(tile => {
-                if (Math.random() < 0.005) {
-                    tile.style.transform = `scale(${0.95 + Math.random() * 0.1})`;
-                    setTimeout(() => {
-                        tile.style.transform = 'scale(1)';
-                    }, 500);
-                }
-            });
-
-            requestAnimationFrame(animate);
-        }
-
         renderBackground();
         renderText();
-        animate();
 
-        // Responsive design
+        // Only resize event, no animations
         window.addEventListener('resize', () => {
             renderBackground();
             renderText();
