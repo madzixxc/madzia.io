@@ -208,7 +208,7 @@
             return false;
         }
 
-        function createTextPixel(x, y, color) {
+        function createTextPixel(x, y, color, isGray = false) {
             const pixel = document.createElement('div');
             pixel.className = 'text-pixel';
             pixel.style.left = `${x}px`;
@@ -216,11 +216,18 @@
             pixel.style.width = `${pixelSize}px`;
             pixel.style.height = `${pixelSize}px`;
             
-            // Create gradient based on the base color
-            const rgb = hexToRgb(color);
-            const lighter = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`;
-            const darker = `rgba(${Math.max(0, rgb.r - 50)}, ${Math.max(0, rgb.g - 50)}, ${Math.max(0, rgb.b - 50)}, 1)`;
-            pixel.style.background = `linear-gradient(135deg, ${lighter} 0%, ${darker} 100%)`;
+            if (isGray) {
+                // Create gray gradient with higher contrast
+                pixel.style.background = `linear-gradient(135deg, 
+                    rgba(180, 180, 180, 0.9) 0%, 
+                    rgba(100, 100, 100, 0.9) 100%)`;
+            } else {
+                // Create gradient based on the base color
+                const rgb = hexToRgb(color);
+                const lighter = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`;
+                const darker = `rgba(${Math.max(0, rgb.r - 50)}, ${Math.max(0, rgb.g - 50)}, ${Math.max(0, rgb.b - 50)}, 1)`;
+                pixel.style.background = `linear-gradient(135deg, ${lighter} 0%, ${darker} 100%)`;
+            }
             
             return pixel;
         }
@@ -257,6 +264,7 @@
             wrapper.innerHTML = '';
             let totalWidth = 0;
             let totalHeight = 5 * pixelSize;
+            const textPixels = new Set();
 
             // Calculate total width
             text.split('').forEach(char => {
@@ -275,7 +283,63 @@
             pixelSize = Math.floor(pixelSize * scale);
             let xOffset = -totalWidth * scale / 2;
 
-            // Render text pixels
+            // First pass: collect text positions
+            text.split('').forEach(char => {
+                if (!letters[char]) return;
+                const pattern = letters[char];
+                pattern.forEach((row, y) => {
+                    for (let x = 0; x < row.length; x++) {
+                        if (row[x] === '1') {
+                            const posX = x * pixelSize + xOffset;
+                            const posY = y * pixelSize - (totalHeight * scale / 2);
+                            textPixels.add(`${posX},${posY}`);
+                        }
+                    }
+                });
+                xOffset += (pattern[0].length + 1) * pixelSize;
+            });
+
+            // Reset xOffset for rendering
+            xOffset = -totalWidth * scale / 2;
+
+            // Second pass: render gray border pixels first
+            text.split('').forEach(char => {
+                if (!letters[char]) return;
+                const pattern = letters[char];
+                pattern.forEach((row, y) => {
+                    for (let x = 0; x < row.length; x++) {
+                        const posX = x * pixelSize + xOffset;
+                        const posY = y * pixelSize - (totalHeight * scale / 2);
+                        
+                        // Add gray pixels around text pixels
+                        if (row[x] === '0') {
+                            // Check if any adjacent position has a text pixel
+                            let hasAdjacentText = false;
+                            for (let dx = -1; dx <= 1; dx++) {
+                                for (let dy = -1; dy <= 1; dy++) {
+                                    if (dx === 0 && dy === 0) continue;
+                                    const checkPos = `${posX + dx * pixelSize},${posY + dy * pixelSize}`;
+                                    if (textPixels.has(checkPos)) {
+                                        hasAdjacentText = true;
+                                        break;
+                                    }
+                                }
+                                if (hasAdjacentText) break;
+                            }
+                            if (hasAdjacentText) {
+                                const pixel = createTextPixel(posX, posY, null, true);
+                                wrapper.appendChild(pixel);
+                            }
+                        }
+                    }
+                });
+                xOffset += (pattern[0].length + 1) * pixelSize;
+            });
+
+            // Reset xOffset for rendering colored text pixels
+            xOffset = -totalWidth * scale / 2;
+
+            // Third pass: render colored text pixels on top
             text.split('').forEach(char => {
                 if (!letters[char]) return;
                 const pattern = letters[char];
