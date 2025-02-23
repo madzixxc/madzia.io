@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>madzia.io</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -64,6 +65,27 @@
                 inset 1px 1px 3px rgba(255, 255, 255, 0.6),
                 inset -1px -1px 3px rgba(0, 0, 0, 0.6),
                 0px 3px 6px rgba(0, 0, 0, 0.4);
+            transition: opacity 0.2s ease-out;
+        }
+
+        .player-cursor {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 2px;
+            pointer-events: none;
+            z-index: 100;
+            transform: translate(-50%, -50%);
+        }
+
+        .projectile {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: yellow;
+            border-radius: 2px;
+            pointer-events: none;
+            z-index: 99;
         }
     </style>
 </head>
@@ -271,9 +293,236 @@
             }
         }
 
+        let projectiles = [];
+        const projectileSpeed = 10;
+        let animationFrameId = null;
+        let textElements = [];
+
+        const playerColors = ['#FF0000', '#00FF00', '#0000FF', '#FF00FF', '#FFFF00', '#00FFFF'];
+        let peers = {};
+        let playerId = Math.random().toString(36).substr(2, 9);
+        let playerColor = playerColors[0];
+        let isHost = false;
+        let destroyedTiles = new Set();
+        let playerCursors = {};
+        let peer;
+        let connections = {};
+
+        function initPeerConnection() {
+            peer = new Peer(playerId, {
+                host: 'peerjs-server.herokuapp.com',
+                secure: true,
+                port: 443,
+                config: {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' }
+                    ]
+                }
+            });
+
+            peer.on('open', (id) => {
+                console.log('My peer ID is: ' + id);
+                if (!isHost) {
+                    connectToExistingPeers();
+                }
+            });
+
+            peer.on('connection', (conn) => {
+                setupConnection(conn);
+                if (isHost) {
+                    conn.on('open', () => {
+                        conn.send({
+                            type: 'initialState',
+                            destroyedTiles: Array.from(destroyedTiles),
+                            playerColor: playerColors[Object.keys(connections).length + 1]
+                        });
+                    });
+                }
+            });
+
+            peer.on('error', (err) => {
+                console.log('Peer error:', err);
+                if (err.type === 'peer-unavailable' && !isHost) {
+                    isHost = true;
+                    playerColor = playerColors[0];
+                    console.log('Becoming host');
+                }
+            });
+        }
+
+        function setupConnection(conn) {
+            connections[conn.peer] = conn;
+
+            conn.on('data', (data) => {
+                switch(data.type) {
+                    case 'cursor':
+                        updateRemoteCursor(conn.peer, data.x, data.y, data.color);
+                        break;
+                    case 'projectile':
+                        createProjectile(data.startX, data.startY, data.targetX, data.targetY);
+                        break;
+                    case 'tileDestroyed':
+                        destroyTile(data.tileId);
+                        break;
+                    case 'gameReset':
+                        resetGame();
+                        break;
+                    case 'initialState':
+                        if (!isHost) {
+                            destroyedTiles = new Set(data.destroyedTiles);
+                            playerColor = data.playerColor;
+                            applyDestroyedTiles();
+                        }
+                        break;
+                }
+            });
+
+            conn.on('close', () => {
+                if (playerCursors[conn.peer]) {
+                    document.body.removeChild(playerCursors[conn.peer]);
+                    delete playerCursors[conn.peer];
+                }
+                delete connections[conn.peer];
+            });
+        }
+
+        async function connectToExistingPeers() {
+            try {
+                const conn = peer.connect(playerId.replace(/[0-9]/g, ''));
+                setupConnection(conn);
+            } catch (err) {
+                console.log('Could not connect to existing peers, becoming host');
+                isHost = true;
+                playerColor = playerColors[0];
+            }
+        }
+
+        function broadcastToAllPeers(data) {
+            Object.values(connections).forEach(conn => {
+                if (conn.open) {
+                    conn.send(data);
+                }
+            });
+        }
+
+        function broadcastCursorPosition(x, y) {
+            broadcastToAllPeers({
+                type: 'cursor',
+                x: x,
+                y: y,
+                color: playerColor
+            });
+        }
+
+        function broadcastProjectile(startX, startY, targetX, targetY) {
+            broadcastToAllPeers({
+                type: 'projectile',
+                startX: startX,
+                startY: startY,
+                targetX: targetX,
+                targetY: targetY
+            });
+        }
+
+        function broadcastTileDestroyed(tileId) {
+            broadcastToAllPeers({
+                type: 'tileDestroyed',
+                tileId: tileId
+            });
+        }
+
+        function broadcastGameReset() {
+            broadcastToAllPeers({
+                type: 'gameReset'
+            });
+        }
+
+        function updateRemoteCursor(id, x, y, color) {
+            if (!playerCursors[id]) {
+                const cursor = document.createElement('div');
+                cursor.className = 'player-cursor';
+                cursor.style.background = color;
+                document.body.appendChild(cursor);
+                playerCursors[id] = cursor;
+            }
+            playerCursors[id].style.left = x + 'px';
+            playerCursors[id].style.top = y + 'px';
+        }
+
+        function createProjectile(startX, startY, targetX, targetY) {
+            const projectile = document.createElement('div');
+            projectile.className = 'projectile';
+            projectile.style.left = startX + 'px';
+            projectile.style.top = startY + 'px';
+
+            const dx = targetX - startX;
+            const dy = targetY - startY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const velocity = {
+                x: (dx / distance) * projectileSpeed,
+                y: (dy / distance) * projectileSpeed
+            };
+
+            projectile.velocity = velocity;
+            projectile.position = { x: startX, y: startY };
+            document.body.appendChild(projectile);
+            broadcastProjectile(startX, startY, targetX, targetY);
+            return projectile;
+        }
+
+        function updateProjectiles() {
+            projectiles.forEach((projectile, index) => {
+                projectile.position.x += projectile.velocity.x;
+                projectile.position.y += projectile.velocity.y;
+                projectile.style.left = projectile.position.x + 'px';
+                projectile.style.top = projectile.position.y + 'px';
+
+                let collision = false;
+                textElements.forEach((element, tileId) => {
+                    if (element.style.opacity !== '0' && checkCollision(projectile, element)) {
+                        element.style.opacity = '0';
+                        destroyedTiles.add(tileId);
+                        broadcastTileDestroyed(tileId);
+                        collision = true;
+                    }
+                });
+
+                if (collision || 
+                    projectile.position.x < 0 || 
+                    projectile.position.x > window.innerWidth ||
+                    projectile.position.y < 0 || 
+                    projectile.position.y > window.innerHeight) {
+                    document.body.removeChild(projectile);
+                    projectiles.splice(index, 1);
+                }
+            });
+
+            animationFrameId = requestAnimationFrame(updateProjectiles);
+        }
+
+        function initGame() {
+            const cursor = createPlayerCursor();
+            cursor.style.background = playerColor;
+            document.body.style.cursor = 'none';
+
+            document.addEventListener('mousemove', (e) => {
+                updatePlayerCursor(e, cursor);
+            });
+
+            document.addEventListener('mousedown', (e) => {
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                const projectile = createProjectile(e.clientX, e.clientY, centerX, centerY);
+                projectiles.push(projectile);
+            });
+
+            updateProjectiles();
+        }
+
         function renderText() {
             const wrapper = document.getElementById('text-wrapper');
             wrapper.innerHTML = '';
+            textElements = [];
 
             let totalWidth = 0;
             let maxHeight = 5;
@@ -332,11 +581,13 @@
 
             borderPixels.forEach(({ x, y }) => {
                 const pixel = createTextPixel(x * pixelSize, y * pixelSize, '#888888');
+                textElements.push(pixel); 
                 wrapper.appendChild(pixel);
             });
 
             textPixels.forEach(({ x, y, color }) => {
                 const pixel = createTextPixel(x * pixelSize, y * pixelSize, color);
+                textElements.push(pixel);
                 wrapper.appendChild(pixel);
             });
 
@@ -346,12 +597,78 @@
             wrapper.style.height = `${wrapperHeight}px`;
         }
 
+        function checkCollision(projectile, element) {
+            const rect1 = projectile.getBoundingClientRect();
+            const rect2 = element.getBoundingClientRect();
+
+            return !(rect1.right < rect2.left || 
+                    rect1.left > rect2.right || 
+                    rect1.bottom < rect2.top || 
+                    rect1.top > rect2.bottom);
+        }
+
+        function createPlayerCursor() {
+            const cursor = document.createElement('div');
+            cursor.className = 'player-cursor';
+            document.body.appendChild(cursor);
+            return cursor;
+        }
+
+        function destroyTile(tileId) {
+            destroyedTiles.add(tileId);
+            const tile = document.querySelector(`[data-tile-id="${tileId}"]`);
+            if (tile) {
+                tile.style.opacity = '0';
+            }
+            checkGameReset();
+        }
+
+        function checkGameReset() {
+            const totalTiles = textElements.length;
+            if (destroyedTiles.size === totalTiles) {
+                setTimeout(() => {
+                    if (isHost) {
+                        destroyedTiles.clear();
+                        resetGame();
+                        broadcastGameReset();
+                    }
+                }, 1000);
+            }
+        }
+
+        function resetGame() {
+            destroyedTiles.clear();
+            renderText();
+        }
+
+        function applyDestroyedTiles() {
+            textElements.forEach((element, index) => {
+                if (destroyedTiles.has(index)) {
+                    element.style.opacity = '0';
+                }
+            });
+        }
+
+        function updatePlayerCursor(e, cursor) {
+            cursor.style.left = e.clientX + 'px';
+            cursor.style.top = e.clientY + 'px';
+            broadcastCursorPosition(e.clientX, e.clientY);
+        }
+
+        initPeerConnection();
         renderBackground();
         renderText();
+        initGame();
 
         window.addEventListener('resize', () => {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
             renderBackground();
             renderText();
+            projectiles = [];
+            document.querySelectorAll('.projectile').forEach(p => p.remove());
+            updateProjectiles();
         });
     </script>
 </body>
