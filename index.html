@@ -508,6 +508,101 @@
             });
         }
 
+        // Broadcast throttling configuration
+        const BROADCAST_CONFIG = {
+            cursor: { interval: 50, batchSize: 1 },
+            projectile: { interval: 16, batchSize: 5 },
+            tile: { interval: 32, batchSize: 3 }
+        };
+
+        // Broadcast state management
+        const broadcastState = {
+            cursor: { lastUpdate: 0, pending: null, timeout: null },
+            projectile: { lastUpdate: 0, pending: [], timeout: null },
+            tile: { lastUpdate: 0, pending: new Set(), timeout: null }
+        };
+
+        function throttledBroadcast(type, data, immediate = false) {
+            const config = BROADCAST_CONFIG[type];
+            const state = broadcastState[type];
+            const now = performance.now();
+
+            if (!config) {
+                debug('Unknown broadcast type:', type);
+                return;
+            }
+
+            function sendBatch() {
+                if (!peer) return;
+
+                switch (type) {
+                    case 'cursor':
+                        if (state.pending) {
+                            broadcastToAllPeers({
+                                type: 'cursor',
+                                ...state.pending
+                            });
+                            state.pending = null;
+                        }
+                        break;
+
+                    case 'projectile':
+                        if (state.pending.length > 0) {
+                            broadcastToAllPeers({
+                                type: 'projectileBatch',
+                                projectiles: state.pending
+                            });
+                            state.pending = [];
+                        }
+                        break;
+
+                    case 'tile':
+                        if (state.pending.size > 0) {
+                            broadcastToAllPeers({
+                                type: 'tileDestroyedBatch',
+                                tileIds: Array.from(state.pending)
+                            });
+                            state.pending.clear();
+                        }
+                        break;
+                }
+
+                state.lastUpdate = now;
+                state.timeout = null;
+            }
+
+            // Update pending data
+            switch (type) {
+                case 'cursor':
+                    state.pending = data;
+                    break;
+                case 'projectile':
+                    state.pending.push(data);
+                    if (state.pending.length >= config.batchSize) {
+                        immediate = true;
+                    }
+                    break;
+                case 'tile':
+                    state.pending.add(data);
+                    if (state.pending.size >= config.batchSize) {
+                        immediate = true;
+                    }
+                    break;
+            }
+
+            // Send immediately if needed
+            if (immediate || now - state.lastUpdate >= config.interval) {
+                if (state.timeout) {
+                    clearTimeout(state.timeout);
+                }
+                sendBatch();
+            } else if (!state.timeout) {
+                // Schedule future send
+                const delay = config.interval - (now - state.lastUpdate);
+                state.timeout = setTimeout(sendBatch, delay);
+            }
+        }
+
         function setupConnection(conn) {
             debug('Setting up connection', { peer: conn.peer });
             connections[conn.peer] = conn;
@@ -525,8 +620,18 @@
                     case 'projectile':
                         createProjectile(data.startX, data.startY, data.targetX, data.targetY);
                         break;
+                    case 'projectileBatch':
+                        data.projectiles.forEach(p => {
+                            createProjectile(p.startX, p.startY, p.targetX, p.targetY);
+                        });
+                        break;
                     case 'tileDestroyed':
                         destroyTile(data.tileId);
+                        break;
+                    case 'tileDestroyedBatch':
+                        data.tileIds.forEach(tileId => {
+                            destroyTile(tileId);
+                        });
                         break;
                     case 'gameReset':
                         resetGame();
@@ -564,8 +669,7 @@
         function broadcastCursorPosition(x, y) {
             if (!peer || !playerColor) return;
             debug('Broadcasting cursor', { x, y, color: playerColor });
-            broadcastToAllPeers({
-                type: 'cursor',
+            throttledBroadcast('cursor', {
                 x: x,
                 y: y,
                 color: playerColor
@@ -574,9 +678,7 @@
 
         function broadcastProjectile(startX, startY, targetX, targetY) {
             if (!peer) return;
-            debug('Broadcasting projectile', { startX, startY, targetX, targetY });
-            broadcastToAllPeers({
-                type: 'projectile',
+            throttledBroadcast('projectile', {
                 startX: startX,
                 startY: startY,
                 targetX: targetX,
@@ -586,11 +688,7 @@
 
         function broadcastTileDestroyed(tileId) {
             if (!peer) return;
-            debug('Broadcasting tile destroyed', { tileId });
-            broadcastToAllPeers({
-                type: 'tileDestroyed',
-                tileId: tileId
-            });
+            throttledBroadcast('tile', tileId);
         }
 
         function broadcastGameReset() {
@@ -841,7 +939,11 @@
         function updatePlayerCursor(e, cursor) {
             cursor.style.left = e.clientX + 'px';
             cursor.style.top = e.clientY + 'px';
-            broadcastCursorPosition(e.clientX, e.clientY);
+            throttledBroadcast('cursor', {
+                x: e.clientX,
+                y: e.clientY,
+                color: playerColor
+            });
         }
 
         let playerColor = null;
