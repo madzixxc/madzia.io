@@ -618,11 +618,11 @@
                         updateRemoteCursor(conn.peer, data.x, data.y, data.color);
                         break;
                     case 'projectile':
-                        createProjectile(data.startX, data.startY, data.targetX, data.targetY);
+                        createProjectile(data.startX, data.startY, data.targetX, data.targetY, true);
                         break;
                     case 'projectileBatch':
                         data.projectiles.forEach(p => {
-                            createProjectile(p.startX, p.startY, p.targetX, p.targetY);
+                            createProjectile(p.startX, p.startY, p.targetX, p.targetY, true);
                         });
                         break;
                     case 'tileDestroyed':
@@ -736,7 +736,7 @@
             playerCursors[id].style.top = y + 'px';
         }
 
-        function createProjectile(startX, startY, targetX, targetY) {
+        function createProjectile(startX, startY, targetX, targetY, fromPeer = false) {
             const projectile = document.createElement('div');
             projectile.className = 'projectile';
             projectile.style.left = startX + 'px';
@@ -753,7 +753,15 @@
             projectile.velocity = velocity;
             projectile.position = { x: startX, y: startY };
             document.body.appendChild(projectile);
-            broadcastProjectile(startX, startY, targetX, targetY);
+            
+            // Add projectile to the array so it gets updated
+            projectiles.push(projectile);
+            
+            // Only broadcast if this is the original projectile (not from peer)
+            if (!fromPeer) {
+                broadcastProjectile(startX, startY, targetX, targetY);
+            }
+            
             return projectile;
         }
 
@@ -799,8 +807,7 @@
             document.addEventListener('mousedown', (e) => {
                 const centerX = window.innerWidth / 2;
                 const centerY = window.innerHeight / 2;
-                const projectile = createProjectile(e.clientX, e.clientY, centerX, centerY);
-                projectiles.push(projectile);
+                createProjectile(e.clientX, e.clientY, centerX, centerY);
             });
 
             updateProjectiles();
