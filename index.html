@@ -351,7 +351,7 @@
 
         function debug(...args) {
             if (debugMode || window.localStorage.debug === '1') {
-                console.log('[DEBUG]', ...args);
+                console.log('[DEBUG]', new Date().toISOString(), ...args);
             }
         }
 
@@ -364,10 +364,14 @@
             const roomFromUrl = getUrlParam('room');
             const roomInput = document.getElementById('room-code');
             
+            debug('Room initialization', { roomFromUrl });
+            
             if (roomFromUrl) {
                 roomId = roomFromUrl.toUpperCase();
+                debug('Using room from URL', { roomId });
             } else {
                 roomId = generateRoomCode();
+                debug('Generated new room', { roomId });
             }
 
             roomInput.value = roomId;
@@ -382,17 +386,21 @@
             const url = new URL(window.location);
             url.searchParams.set('room', roomCode);
             window.history.replaceState({}, '', url);
+            debug('URL updated', { roomCode });
         }
 
         function showRoomInfo() {
             const roomInput = document.getElementById('room-code');
             roomInput.value = roomId;
+            debug('Room info updated', { roomId });
         }
 
         function joinRoom() {
             const roomCode = document.getElementById('room-code').value.trim().toUpperCase();
             if (!roomCode || roomCode === roomId) return;
             
+            debug('Joining room', { currentRoom: roomId, newRoom: roomCode });
+
             if (peer) {
                 peer.destroy();
             }
@@ -407,17 +415,23 @@
         }
 
         function initPeerConnection(createNewRoom = true) {
+            debug('Peer connection init', { createNewRoom, roomId, playerId });
+
             isHost = createNewRoom;
             if (createNewRoom) {
                 playerColor = playerColors[0];
                 usedColors.add(playerColor);
+                debug('Host setup', { playerColor });
             }
 
             if (peer) {
+                debug('Destroying existing peer');
                 peer.destroy();
             }
 
             const peerId = isHost ? `${roomId}-host` : `${roomId}-${playerId}`;
+            debug('Creating peer', { peerId, isHost });
+
             peer = new Peer(peerId, {
                 host: '0.peerjs.com',
                 secure: true,
@@ -432,61 +446,78 @@
             });
 
             peer.on('open', (id) => {
+                debug('Peer opened', { id, isHost });
                 showRoomInfo();
                 
                 if (!isHost) {
+                    debug('Connecting to host');
                     const hostConn = peer.connect(`${roomId}-host`);
                     setupConnection(hostConn);
                 }
             });
 
             peer.on('connection', (conn) => {
+                debug('Incoming connection', { from: conn.peer });
                 setupConnection(conn);
                 
                 if (isHost) {
                     const newPlayerColor = getNextAvailableColor();
+                    debug('New player setup', { newPlayerColor, peer: conn.peer });
+                    
                     conn.on('open', () => {
-                        conn.send({
+                        const state = {
                             type: 'initialState',
                             destroyedTiles: Array.from(destroyedTiles),
                             playerColor: newPlayerColor,
                             usedColors: Array.from(usedColors)
-                        });
+                        };
+                        debug('Sending initial state', state);
+                        conn.send(state);
                     });
                 }
             });
 
             peer.on('error', (err) => {
-                
+                debug('Peer error', { type: err.type, message: err.message });
+                if (err.type === 'peer-unavailable') {
+                    debug('Host not available, retrying in 2s');
+                    setTimeout(() => {
+                        if (!peer.disconnected) {
+                            debug('Retrying connection to host');
+                            const hostConn = peer.connect(`${roomId}-host`);
+                            setupConnection(hostConn);
+                        }
+                    }, 2000);
+                }
             });
 
             peer.on('disconnected', () => {
-                
+                debug('Peer disconnected', { isHost, roomId });
+                if (!isHost) {
+                    setTimeout(() => {
+                        if (peer.disconnected) {
+                            debug('Attempting to reconnect');
+                            peer.reconnect();
+                        }
+                    }, 2000);
+                }
             });
 
             peer.on('close', () => {
-                
+                debug('Peer closed', { isHost, roomId });
             });
-        }
-
-        function getNextAvailableColor() {
-            const availableColors = playerColors.filter(color => !usedColors.has(color));
-            if (availableColors.length > 0) {
-                const color = availableColors[0];
-                usedColors.add(color);
-                return color;
-            }
-            return playerColors[Math.floor(Math.random() * playerColors.length)];
         }
 
         function setupConnection(conn) {
+            debug('Setting up connection', { peer: conn.peer });
             connections[conn.peer] = conn;
             
             conn.on('open', () => {
-                
+                debug('Connection opened', { peer: conn.peer });
             });
 
             conn.on('data', (data) => {
+                debug('Received data', { type: data.type, from: conn.peer });
                 switch(data.type) {
                     case 'cursor':
                         updateRemoteCursor(conn.peer, data.x, data.y, data.color);
@@ -502,6 +533,10 @@
                         break;
                     case 'initialState':
                         if (!isHost) {
+                            debug('Received initial state', { 
+                                tilesCount: data.destroyedTiles.length,
+                                color: data.playerColor
+                            });
                             destroyedTiles = new Set(data.destroyedTiles);
                             playerColor = data.playerColor;
                             if (data.usedColors) {
@@ -514,27 +549,21 @@
             });
 
             conn.on('close', () => {
+                debug('Connection closed', { 
+                    peer: conn.peer,
+                    remaining: Object.keys(connections).length - 1
+                });
                 if (playerCursors[conn.peer]) {
                     document.body.removeChild(playerCursors[conn.peer]);
                     delete playerCursors[conn.peer];
                 }
                 delete connections[conn.peer];
-
-                if (Object.keys(connections).length === 0 && !isHost) {
-                    
-                }
-            });
-        }
-
-        function broadcastToAllPeers(data) {
-            Object.values(connections).forEach(conn => {
-                if (conn.open) {
-                    conn.send(data);
-                }
             });
         }
 
         function broadcastCursorPosition(x, y) {
+            if (!peer || !playerColor) return;
+            debug('Broadcasting cursor', { x, y, color: playerColor });
             broadcastToAllPeers({
                 type: 'cursor',
                 x: x,
@@ -544,6 +573,8 @@
         }
 
         function broadcastProjectile(startX, startY, targetX, targetY) {
+            if (!peer) return;
+            debug('Broadcasting projectile', { startX, startY, targetX, targetY });
             broadcastToAllPeers({
                 type: 'projectile',
                 startX: startX,
@@ -554,6 +585,8 @@
         }
 
         function broadcastTileDestroyed(tileId) {
+            if (!peer) return;
+            debug('Broadcasting tile destroyed', { tileId });
             broadcastToAllPeers({
                 type: 'tileDestroyed',
                 tileId: tileId
@@ -561,9 +594,36 @@
         }
 
         function broadcastGameReset() {
+            if (!peer) return;
+            debug('Broadcasting game reset');
             broadcastToAllPeers({
                 type: 'gameReset'
             });
+        }
+
+        function broadcastToAllPeers(data) {
+            if (!peer || Object.keys(connections).length === 0) return;
+            
+            debug('Broadcasting', { 
+                type: data.type, 
+                peers: Object.keys(connections)
+            });
+            
+            Object.values(connections).forEach(conn => {
+                if (conn.open) {
+                    conn.send(data);
+                }
+            });
+        }
+
+        function getNextAvailableColor() {
+            const availableColors = playerColors.filter(color => !usedColors.has(color));
+            if (availableColors.length > 0) {
+                const color = availableColors[0];
+                usedColors.add(color);
+                return color;
+            }
+            return playerColors[Math.floor(Math.random() * playerColors.length)];
         }
 
         function updateRemoteCursor(id, x, y, color) {
@@ -787,6 +847,8 @@
         let playerColor = null;
         let destroyedTiles = new Set();
         let playerCursors = {};
+
+        console.log('Debug mode can be enabled with: localStorage.debug = "1"');
 
         initializeRoom();
         renderBackground();
